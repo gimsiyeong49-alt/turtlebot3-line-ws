@@ -1,0 +1,43 @@
+angle_lidar_mux:
+  ros__parameters:
+    scan_topic: /scan
+    line_cmd_topic: /cmd_vel_line
+    cmd_vel_topic: /cmd_vel
+
+    force_side: 1.0
+    path_max_dist: 0.35
+    path_width_m: 0.22
+    detect_frames: 2
+    hard_stop_dist: 0.13
+
+    turn_out_deg: 90.0
+    align_back_deg: 93.0
+    turn_w: 0.70
+    turn_v: 0.0
+
+    lateral_dist_m: 0.28
+    lateral_v: 0.12
+
+    forward_pass_time: 4.0
+    forward_pass_v: 0.15
+    pass_steer_thresh: 0.80
+
+    return_arc_time: 1.20
+    return_arc_v: 0.12
+    return_arc_w: 0.25
+
+    search_time: 15.0
+    search_v: 0.12
+
+    boundary_max_dist: 1.00
+    boundary_x_min: -0.20
+    boundary_x_max: 0.20
+
+    return_min_v: 0.080
+    return_max_abs_w: 0.250
+    line_good_frames: 4
+
+    traffic_bool_enable: true
+    traffic_topic: /traffic_light
+    traffic_stop_time: 4.0
+    traffic_stop_max_count: 2

@@ -1,0 +1,6 @@
+usb_cam:
+  ros__parameters:
+    image_width: 320
+    image_height: 240
+    framerate: 10.0
+    pixel_format: yuyv
