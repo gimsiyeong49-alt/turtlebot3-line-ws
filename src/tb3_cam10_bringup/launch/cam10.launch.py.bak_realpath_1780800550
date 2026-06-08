@@ -12,36 +12,28 @@ def generate_launch_description():
     camera_yaml = os.path.join(share, 'config', 'camera_320x240_10hz.yaml')
     camset_script = os.path.join(share, 'scripts', 'camset.sh')
 
-    # by-id는 고정 경로, usb_cam에는 realpath로 풀린 /dev/videoX 전달
-    cam_dev = os.path.realpath('/dev/v4l/by-id/usb-Arducam_Technology_Co.__Ltd._Arducam_USB_Camera_UC684-video-index0')
+    cam_dev = '/dev/v4l/by-id/usb-Arducam_Technology_Co.__Ltd._Arducam_USB_Camera_UC684-video-index0'
 
     return LaunchDescription([
         LogInfo(msg=f'[tb3_cam10_bringup] camera device: {cam_dev}'),
 
-        # 기존 카메라 노드 정리
         ExecuteProcess(
             cmd=['bash', '-lc', 'pkill -f "[u]sb_cam" || true; pkill -f "[v]4l2_camera" || true'],
             output='screen'
         ),
 
-        # 카메라 설정은 usb_cam이 잡기 전에 한 번만 순차 실행
-        TimerAction(
-            period=0.3,
-            actions=[
-                ExecuteProcess(
-                    cmd=[
-                        'bash', '-lc',
-                        f'v4l2-ctl -d "{cam_dev}" --set-parm=10 || true; '
-                        f'bash "{camset_script}" || true'
-                    ],
-                    output='screen'
-                )
-            ]
+        ExecuteProcess(
+            cmd=['v4l2-ctl', '-d', cam_dev, '--set-parm=10'],
+            output='screen'
         ),
 
-        # 설정 끝난 뒤 usb_cam 시작
+        ExecuteProcess(
+            cmd=['bash', camset_script],
+            output='screen'
+        ),
+
         TimerAction(
-            period=2.0,
+            period=1.0,
             actions=[
                 Node(
                     package='usb_cam',
@@ -53,6 +45,16 @@ def generate_launch_description():
                     ],
                     output='screen',
                     emulate_tty=True,
+                )
+            ]
+        ),
+
+        TimerAction(
+            period=2.5,
+            actions=[
+                ExecuteProcess(
+                    cmd=['bash', camset_script],
+                    output='screen'
                 )
             ]
         ),

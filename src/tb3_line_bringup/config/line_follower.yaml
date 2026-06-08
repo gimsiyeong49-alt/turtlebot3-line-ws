@@ -32,7 +32,7 @@ yellow_line_follower_node:
     slow_sign_enable: true
     slow_sign_topic: /slow_sign
     slow_sign_process_hz: 3.0
-    slow_sign_hold_time: 1.0
+    slow_sign_hold_time: 2.5
     slow_sign_max_speed: 0.105
     slow_roi_top: 0.32
     slow_roi_bottom: 0.64
@@ -55,7 +55,7 @@ yellow_line_follower_node:
     slow_min_black_pixels: 0
     slow_min_black_ratio_x1000: 0
     slow_confirm_frames: 2
-    slow_clear_frames: 2
+    slow_clear_frames: 4
 
     vision_avoid_enable: false
 
@@ -138,3 +138,66 @@ yellow_line_follower_node:
     line_ignore_left: 0.00
 
     line_ignore_right: 0.46
+
+
+    slow_sign_hold_time: 2.5
+
+
+    slow_confirm_frames: 2
+
+
+    slow_clear_frames: 4
+
+
+    slow_triangle_enable: true
+
+
+    slow_triangle_min_area: 100.0
+
+
+    slow_triangle_epsilon_ratio: 0.065
+
+
+    slow_triangle_min_box_w: 18
+
+
+    slow_triangle_min_box_h: 18
+
+
+    slow_triangle_edge_margin_px: 3
+
+
+    traffic_reject_sign_enable: true
+
+
+    traffic_reject_triangle_enable: true
+
+
+    traffic_reject_white_enable: true
+
+
+    traffic_reject_min_area: 60.0
+
+
+    traffic_reject_epsilon_ratio: 0.08
+
+
+    traffic_reject_min_box_w: 14
+
+
+    traffic_reject_min_box_h: 14
+
+
+    traffic_reject_edge_margin_px: 0
+
+
+    traffic_reject_inner_margin_ratio: 0.15
+
+
+    traffic_reject_white_min: 120
+
+
+    traffic_reject_white_delta_max: 100
+
+
+    traffic_reject_min_white_ratio_x1000: 180

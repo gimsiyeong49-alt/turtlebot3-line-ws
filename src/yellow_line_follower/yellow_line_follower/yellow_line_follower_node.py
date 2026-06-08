@@ -156,6 +156,13 @@ class YellowLineFollower(Node):
         self.declare_parameter('slow_min_contour_area', 50)
         self.declare_parameter('slow_min_box_w', 14)
         self.declare_parameter('slow_min_box_h', 14)
+        # [SLOW TRIANGLE] 빨간 삼각형 표지판일 때만 서행
+        self.declare_parameter('slow_triangle_enable', True)
+        self.declare_parameter('slow_triangle_min_area', 100.0)
+        self.declare_parameter('slow_triangle_epsilon_ratio', 0.065)
+        self.declare_parameter('slow_triangle_min_box_w', 18)
+        self.declare_parameter('slow_triangle_min_box_h', 18)
+        self.declare_parameter('slow_triangle_edge_margin_px', 3)
         self.declare_parameter('slow_reject_edge_px', 4)
 
         self.declare_parameter('slow_inner_check_enable', True)
@@ -185,6 +192,19 @@ class YellowLineFollower(Node):
         self.declare_parameter('traffic_min_ratio_x1000', 50)
         self.declare_parameter('traffic_confirm_frames', 1)
         self.declare_parameter('traffic_clear_frames', 3)
+        # [TRAFFIC REJECT] 빨간 삼각 표지판/흰 내부 표지판은 STOP에서 제외
+        self.declare_parameter('traffic_reject_sign_enable', True)
+        self.declare_parameter('traffic_reject_triangle_enable', True)
+        self.declare_parameter('traffic_reject_white_enable', True)
+        self.declare_parameter('traffic_reject_min_area', 100.0)
+        self.declare_parameter('traffic_reject_epsilon_ratio', 0.065)
+        self.declare_parameter('traffic_reject_min_box_w', 20)
+        self.declare_parameter('traffic_reject_min_box_h', 20)
+        self.declare_parameter('traffic_reject_edge_margin_px', 2)
+        self.declare_parameter('traffic_reject_inner_margin_ratio', 0.15)
+        self.declare_parameter('traffic_reject_white_min', 120)
+        self.declare_parameter('traffic_reject_white_delta_max', 100)
+        self.declare_parameter('traffic_reject_min_white_ratio_x1000', 250)
         self.declare_parameter('log_interval',   0.25)
         self.declare_parameter('invert_angular', False)
 
@@ -291,14 +311,116 @@ class YellowLineFollower(Node):
             ((r - b) >= self.get_int('traffic_red_margin_b'))
         )
 
-        red_pixels = int(np.count_nonzero(red_mask))
-        total_pixels = max(1, int(red_mask.size))
+        mask_u8 = (red_mask.astype(np.uint8) * 255)
+        k = np.ones((3, 3), np.uint8)
+        mask_u8 = cv2.morphologyEx(mask_u8, cv2.MORPH_CLOSE, k)
+        mask_u8 = cv2.morphologyEx(mask_u8, cv2.MORPH_OPEN, k)
+
+        red_pixels = int(np.count_nonzero(mask_u8))
+        total_pixels = max(1, int(mask_u8.size))
         ratio_x1000 = int(red_pixels * 1000 / total_pixels)
 
-        raw_detected = (
+        contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        best_box = None
+        best_area = 0.0
+        best_vertices = 0
+        triangle_like = False
+        white_ratio_x1000 = 0
+        white_reject = False
+
+        min_area = self.get_float('traffic_reject_min_area')
+        eps_ratio = self.get_float('traffic_reject_epsilon_ratio')
+        min_box_w = self.get_int('traffic_reject_min_box_w')
+        min_box_h = self.get_int('traffic_reject_min_box_h')
+        edge = self.get_int('traffic_reject_edge_margin_px')
+        roi_h, roi_w = roi.shape[:2]
+
+        for c in contours:
+            area = float(cv2.contourArea(c))
+            if area < min_area:
+                continue
+
+            bx, by, bw, bh = cv2.boundingRect(c)
+
+            box_ok = (
+                bw >= min_box_w and
+                bh >= min_box_h and
+                bx >= edge and
+                by >= edge and
+                (bx + bw) <= (roi_w - edge) and
+                (by + bh) <= (roi_h - edge)
+            )
+
+            if not box_ok:
+                continue
+
+            peri = cv2.arcLength(c, True)
+            if peri <= 1.0:
+                continue
+
+            approx = cv2.approxPolyDP(c, eps_ratio * peri, True)
+            vertices = len(approx)
+            convex = cv2.isContourConvex(approx) if vertices >= 3 else False
+
+            # 저해상도라 삼각 테두리가 3개로 딱 안 떨어질 수 있어서 3~5개 허용
+            tri = convex and (3 <= vertices <= 6)
+
+            if area > best_area:
+                best_area = area
+                best_box = (bx, by, bw, bh)
+                best_vertices = vertices
+                triangle_like = tri
+
+        if best_box is not None:
+            bx, by, bw, bh = best_box
+            margin = self.get_float('traffic_reject_inner_margin_ratio')
+            mx = int(bw * margin)
+            my = int(bh * margin)
+
+            ix1 = int(self.clamp(bx + mx, 0, roi.shape[1] - 1))
+            iy1 = int(self.clamp(by + my, 0, roi.shape[0] - 1))
+            ix2 = int(self.clamp(bx + bw - mx, ix1 + 1, roi.shape[1]))
+            iy2 = int(self.clamp(by + bh - my, iy1 + 1, roi.shape[0]))
+
+            inner = roi[iy1:iy2, ix1:ix2]
+
+            if inner.size > 0:
+                ib = inner[:, :, 0].astype(np.int16)
+                ig = inner[:, :, 1].astype(np.int16)
+                ir = inner[:, :, 2].astype(np.int16)
+
+                maxc = np.maximum(np.maximum(ir, ig), ib)
+                minc = np.minimum(np.minimum(ir, ig), ib)
+
+                white_mask = (
+                    (ir >= self.get_int('traffic_reject_white_min')) &
+                    (ig >= self.get_int('traffic_reject_white_min')) &
+                    (ib >= self.get_int('traffic_reject_white_min')) &
+                    ((maxc - minc) <= self.get_int('traffic_reject_white_delta_max'))
+                )
+
+                inner_total = max(1, int(white_mask.size))
+                white_pixels = int(np.count_nonzero(white_mask))
+                white_ratio_x1000 = int(white_pixels * 1000 / inner_total)
+
+                white_reject = (
+                    white_ratio_x1000 >=
+                    self.get_int('traffic_reject_min_white_ratio_x1000')
+                )
+
+        raw_detected_base = (
             red_pixels >= self.get_int('traffic_min_pixels') and
             ratio_x1000 >= self.get_int('traffic_min_ratio_x1000')
         )
+
+        sign_reject = False
+        if self.get_bool('traffic_reject_sign_enable'):
+            tri_reject = self.get_bool('traffic_reject_triangle_enable') and triangle_like
+            w_reject = self.get_bool('traffic_reject_white_enable') and white_reject
+            sign_reject = tri_reject or w_reject
+
+        raw_detected = raw_detected_base and (not sign_reject)
 
         if raw_detected:
             self.traffic_red_count += 1
@@ -321,9 +443,12 @@ class YellowLineFollower(Node):
             self.last_traffic_log_time = now
             self.get_logger().warn(
                 f'TRAFFIC_ROI state={self.traffic_state} raw={raw_detected} '
-                f'pixels={red_pixels} ratio={ratio_x1000}/1000'
+                f'base={raw_detected_base} reject={sign_reject} '
+                f'tri={triangle_like} vertices={best_vertices} '
+                f'white={white_ratio_x1000}/1000 '
+                f'pixels={red_pixels} ratio={ratio_x1000}/1000 '
+                f'area={best_area:.1f} box={best_box}'
             )
-
 
 
     def update_slow_sign_roi(self, frame, now):
@@ -372,91 +497,62 @@ class YellowLineFollower(Node):
 
         contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        max_area = 0.0
         best_box = None
+        best_area = 0.0
+        best_vertices = 0
+        triangle_ok = False
+
+        edge = self.get_int('slow_triangle_edge_margin_px')
+        min_box_w = self.get_int('slow_triangle_min_box_w')
+        min_box_h = self.get_int('slow_triangle_min_box_h')
+        min_area = self.get_float('slow_triangle_min_area')
+        eps_ratio = self.get_float('slow_triangle_epsilon_ratio')
+        roi_h, roi_w = roi.shape[:2]
 
         for c in contours:
             area = float(cv2.contourArea(c))
-            if area > max_area:
-                max_area = area
-                bx, by, bw, bh = cv2.boundingRect(c)
-                best_box = (bx, by, bw, bh)
+            if area < min_area:
+                continue
 
-        box_ok = False
-        inner_ok = True
-        white_ratio_x1000 = 0
-        black_pixels = 0
-        black_ratio_x1000 = 0
+            bx, by, bw, bh = cv2.boundingRect(c)
 
-        if best_box is not None:
-            bx, by, bw, bh = best_box
-            box_ok = bw >= self.get_int('slow_min_box_w') and bh >= self.get_int('slow_min_box_h')
-
-            # ROI 경계에 붙은 빨간 반사/잘린 물체는 서행 표지판으로 보지 않음
-            edge = self.get_int('slow_reject_edge_px')
-            roi_hh, roi_ww = roi.shape[:2]
-            box_edge_ok = (
-                bx > edge and by > edge and
-                (bx + bw) < (roi_ww - edge) and
-                (by + bh) < (roi_hh - edge)
+            box_ok = (
+                bw >= min_box_w and
+                bh >= min_box_h and
+                bx >= edge and
+                by >= edge and
+                (bx + bw) <= (roi_w - edge) and
+                (by + bh) <= (roi_h - edge)
             )
-            box_ok = box_ok and box_edge_ok
 
-            if self.get_bool('slow_inner_check_enable') and box_ok:
-                margin = self.get_float('slow_inner_margin_ratio')
-                mx = int(bw * margin)
-                my = int(bh * margin)
+            if not box_ok:
+                continue
 
-                ix1 = int(self.clamp(bx + mx, 0, roi.shape[1] - 1))
-                iy1 = int(self.clamp(by + my, 0, roi.shape[0] - 1))
-                ix2 = int(self.clamp(bx + bw - mx, ix1 + 1, roi.shape[1]))
-                iy2 = int(self.clamp(by + bh - my, iy1 + 1, roi.shape[0]))
+            peri = cv2.arcLength(c, True)
+            if peri <= 1.0:
+                continue
 
-                inner = roi[iy1:iy2, ix1:ix2]
+            approx = cv2.approxPolyDP(c, eps_ratio * peri, True)
+            vertices = len(approx)
+            convex = cv2.isContourConvex(approx) if vertices >= 3 else False
+            tri_like = convex and (3 <= vertices <= 5)
 
-                if inner.size == 0:
-                    inner_ok = False
-                else:
-                    ib = inner[:, :, 0].astype(np.int16)
-                    ig = inner[:, :, 1].astype(np.int16)
-                    ir = inner[:, :, 2].astype(np.int16)
+            if tri_like and area > best_area:
+                best_area = area
+                best_box = (bx, by, bw, bh)
+                best_vertices = vertices
+                triangle_ok = True
 
-                    maxc = np.maximum(np.maximum(ir, ig), ib)
-                    minc = np.minimum(np.minimum(ir, ig), ib)
-
-                    white_mask = (
-                        (ir >= self.get_int('slow_white_min')) &
-                        (ig >= self.get_int('slow_white_min')) &
-                        (ib >= self.get_int('slow_white_min')) &
-                        ((maxc - minc) <= self.get_int('slow_white_delta_max'))
-                    )
-
-                    black_mask = (
-                        (ir <= self.get_int('slow_black_max')) &
-                        (ig <= self.get_int('slow_black_max')) &
-                        (ib <= self.get_int('slow_black_max'))
-                    )
-
-                    inner_total = max(1, int(white_mask.size))
-                    white_pixels = int(np.count_nonzero(white_mask))
-                    black_pixels = int(np.count_nonzero(black_mask))
-
-                    white_ratio_x1000 = int(white_pixels * 1000 / inner_total)
-                    black_ratio_x1000 = int(black_pixels * 1000 / inner_total)
-
-                    inner_ok = (
-                        white_ratio_x1000 >= self.get_int('slow_min_white_ratio_x1000') and
-                        black_pixels >= self.get_int('slow_min_black_pixels') and
-                        black_ratio_x1000 >= self.get_int('slow_min_black_ratio_x1000')
-                    )
-
-        raw_detected = (
+        base_red_ok = (
             red_pixels >= self.get_int('slow_min_pixels') and
             ratio_x1000 >= self.get_int('slow_min_ratio_x1000') and
-            max_area >= self.get_float('slow_min_contour_area') and
-            box_ok and
-            inner_ok
+            best_area >= self.get_float('slow_triangle_min_area')
         )
+
+        if self.get_bool('slow_triangle_enable'):
+            raw_detected = base_red_ok and triangle_ok
+        else:
+            raw_detected = base_red_ok
 
         if raw_detected:
             self.slow_red_count += 1
@@ -482,9 +578,9 @@ class YellowLineFollower(Node):
             self.last_slow_log_time = now
             self.get_logger().warn(
                 f'SLOW_SIGN active={active} raw={raw_detected} '
+                f'base_red={base_red_ok} tri={triangle_ok} vertices={best_vertices} '
                 f'red_pix={red_pixels} ratio={ratio_x1000}/1000 '
-                f'area={max_area:.1f} box={best_box} '
-                f'white={white_ratio_x1000}/1000 black={black_pixels}/{black_ratio_x1000}/1000'
+                f'area={best_area:.1f} box={best_box}'
             )
 
     def slow_sign_active(self, now):

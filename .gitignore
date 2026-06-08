@@ -1,13 +1,8 @@
 build/
 install/
 log/
-__pycache__/
+.cache/
 *.pyc
-*.pyo
-*.log
-*.txt
-*.bag
-*.db3
+__pycache__/
 .vscode/
 .idea/
-.DS_Store
